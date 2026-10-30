@@ -1,0 +1,38 @@
+name: Notify AltStore repo
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get IPA size
+        id: size
+        run: |
+          URL=$(echo '${{ toJson(github.event.release.assets) }}' | python3 -c "
+          import json,sys
+          assets = json.load(sys.stdin)
+          ipa = next((a for a in assets if a['name'].endswith('.ipa')), None)
+          print(ipa['browser_download_url'] if ipa else '')
+          ")
+          SIZE=$(curl -sI "$URL" | grep -i content-length | awk '{print $2}' | tr -d '\r')
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "size=${SIZE:-0}" >> $GITHUB_OUTPUT
+
+      - name: Dispatch to RepoIPAs
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.ALTSTORE_REPO_TOKEN }}
+          repository: M4th12/RepoIPAs
+          event-type: new-release
+          client-payload: |
+            {
+              "app_id": "com.google.ios.youtube",
+              "version": "${{ github.event.release.tag_name }}",
+              "date": "${{ github.event.release.published_at }}",
+              "download_url": "${{ steps.size.outputs.url }}",
+              "size": ${{ steps.size.outputs.size }},
+              "description": "${{ github.event.release.name }}"
+            }
