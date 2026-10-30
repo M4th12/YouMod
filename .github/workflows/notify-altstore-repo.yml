@@ -8,31 +8,27 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: Get IPA size
-        id: size
-        run: |
-          URL=$(echo '${{ toJson(github.event.release.assets) }}' | python3 -c "
-          import json,sys
-          assets = json.load(sys.stdin)
-          ipa = next((a for a in assets if a['name'].endswith('.ipa')), None)
-          print(ipa['browser_download_url'] if ipa else '')
-          ")
-          SIZE=$(curl -sI "$URL" | grep -i content-length | awk '{print $2}' | tr -d '\r')
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "size=${SIZE:-0}" >> $GITHUB_OUTPUT
-
       - name: Dispatch to RepoIPAs
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.ALTSTORE_REPO_TOKEN }}
-          repository: M4th12/RepoIPAs
-          event-type: new-release
-          client-payload: |
-            {
-              "app_id": "com.google.ios.youtube",
-              "version": "${{ github.event.release.tag_name }}",
-              "date": "${{ github.event.release.published_at }}",
-              "download_url": "${{ steps.size.outputs.url }}",
-              "size": ${{ steps.size.outputs.size }},
-              "description": "${{ github.event.release.name }}"
-            }
+        env:
+          TOKEN: ${{ secrets.ALTSTORE_REPO_TOKEN }}
+          RELEASE: ${{ toJson(github.event.release) }}
+        run: |
+          PAYLOAD=$(echo "$RELEASE" | jq -c --arg app_id "com.google.ios.youtube" '
+            (.assets | map(select(.name | endswith(".ipa"))) | first) as $ipa
+            | {
+                event_type: "new-release",
+                client_payload: {
+                  app_id: $app_id,
+                  version: (.tag_name | ltrimstr("v")),
+                  date: .published_at[0:10],
+                  download_url: $ipa.browser_download_url,
+                  size: $ipa.size,
+                  description: (.name // .tag_name)
+                }
+              }')
+
+          curl -sS -f -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/M4th12/RepoIPAs/dispatches \
+            -d "$PAYLOAD"
